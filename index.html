@@ -6,6 +6,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Hermeen — ∞ Budget</title>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
@@ -246,6 +248,13 @@ html,body{height:100%;font-family:'Outfit',sans-serif;background:var(--bg);color
 .empty-state .empty-icon{font-size:2.5rem;margin-bottom:.5rem;}
 .empty-state p{font-size:.82rem;margin-top:.3rem;}
 
+/* ═══ SYNC INDICATOR ═══ */
+.sync-badge{position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:9998;font-size:.6rem;font-weight:700;padding:3px 10px;border-radius:20px;transition:all .4s;pointer-events:none;letter-spacing:.5px;}
+.sync-badge.syncing{background:rgba(255,215,64,0.2);color:var(--gold);opacity:1;}
+.sync-badge.synced{background:rgba(105,240,174,0.15);color:var(--green);opacity:1;}
+.sync-badge.offline{background:rgba(255,82,82,0.15);color:var(--red);opacity:1;}
+.sync-badge.hidden{opacity:0;}
+
 /* ═══ CONFIRM MODAL ═══ */
 .confirm-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:3000;display:none;align-items:center;justify-content:center;padding:1.5rem;}
 .confirm-overlay.show{display:flex;}
@@ -266,6 +275,7 @@ html,body{height:100%;font-family:'Outfit',sans-serif;background:var(--bg);color
 
 <!-- PARTICLES -->
 <div id="particles"></div>
+<div class="sync-badge hidden" id="sync-badge"></div>
 
 <!-- SPLASH -->
 <div class="splash" id="splash">
@@ -326,9 +336,9 @@ html,body{height:100%;font-family:'Outfit',sans-serif;background:var(--bg);color
 
 <div class="tabs">
   <div class="tab active" data-tab="budget" onclick="switchTab('budget')">∞ Budget</div>
-  <div class="tab" data-tab="analytics" onclick="switchTab('analytics')">📊 Stats</div>
-  <div class="tab" data-tab="savings" onclick="switchTab('savings')">🎯 Savings</div>
-  <div class="tab" data-tab="activity" onclick="switchTab('activity')">🕐 Log</div>
+  <div class="tab" data-tab="analytics" onclick="switchTab('analytics')">?? Stats</div>
+  <div class="tab" data-tab="savings" onclick="switchTab('savings')">?? Savings</div>
+  <div class="tab" data-tab="activity" onclick="switchTab('activity')">?? Log</div>
 </div>
 
 <div class="content" id="tab-budget">
@@ -453,7 +463,7 @@ html,body{height:100%;font-family:'Outfit',sans-serif;background:var(--bg);color
     <h3>⚙️ Infinity Settings</h3>
     <div class="set-row"><div class="set-label">Monthly Income</div><div class="set-val" id="set-income" onclick="openInputModal('Edit Income','Monthly income (PKR):',data.income,doEditIncome)">PKR 0</div></div>
     <div class="set-row"><div class="set-label">Saving Goal</div><div class="set-val" id="set-goal" onclick="openInputModal('Edit Goal','Savings goal (PKR):',data.savingsGoal||0,doEditGoal)">PKR 0</div></div>
-    <div class="set-row"><div class="set-label">Export Data</div><div class="set-val" onclick="exportData()">📥 Download</div></div>
+    <div class="set-row"><div class="set-label">Export Data</div><div class="set-val" onclick="exportData()">?? Download</div></div>
     <div class="set-danger" onclick="openConfirm('Reset Everything?','This will permanently delete all your data.',resetAll)">⚠️ Reset Everything</div>
     <button class="gojo-btn outline" onclick="closeSettings()" style="margin-top:.5rem;">Close</button>
   </div>
@@ -489,7 +499,7 @@ html,body{height:100%;font-family:'Outfit',sans-serif;background:var(--bg);color
 <div class="toast" id="toast"></div>
 
 <script>
-const ICONS=['🛒','⛽','🍽️','🛍️','🏠','💊','📱','🌐','💇','🚗','✈️','👗','📦','💡','🎓','🏥','🎁','🧴','☕','💝','🤲','🎬','🏋️','📅','🐱','💄','🎵','🧸'];
+const ICONS=['??','⛽','??️','??️','??','??','??','??','??','??','✈️','??','??','??','??','??','??','??','☕','??','??','??','??️','??','??','??','??','??'];
 const COLORS=['#4FC3F7','#7C4DFF','#00E5FF','#69F0AE','#FFD740','#FF5252','#B388FF','#FF80AB','#18FFFF','#FFAB40'];
 const BANKS=['HBL','ABL','MCB','UBL','Meezan','JazzCash','Easypaisa','SCB','Faysal','Allied','Bank Alfalah','Other'];
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -498,8 +508,73 @@ let data={};
 let selIcon=ICONS[0],selColor=COLORS[0],selBank=BANKS[0];
 let savMode='add',editingCatId=null,confirmCb=null,inputCb=null;
 const LS='hermeen_infinity_v2';
-function loadData(){try{data=JSON.parse(localStorage.getItem(LS))||{};}catch(e){data={};}}
-function saveD(){localStorage.setItem(LS,JSON.stringify(data));}
+
+// ═══ FIREBASE CONFIG ═══
+const firebaseConfig={
+  apiKey:"AIzaSyAdOjs50X0cnOeSIISWijkULS7dywj49_s",
+  authDomain:"budget-f20d9.firebaseapp.com",
+  databaseURL:"https://budget-f20d9-default-rtdb.firebaseio.com",
+  projectId:"budget-f20d9",
+  storageBucket:"budget-f20d9.firebasestorage.app",
+  messagingSenderId:"168772260535",
+  appId:"1:168772260535:web:44b73f43c2d8f5cc597332"
+};
+firebase.initializeApp(firebaseConfig);
+const db=firebase.database();
+const dbRef=db.ref('hermeen');
+let firebaseReady=false;
+let saving=false;
+
+function showSync(state,msg){
+  const b=document.getElementById('sync-badge');
+  b.textContent=msg;b.className='sync-badge '+state;
+  if(state==='synced'){setTimeout(()=>b.classList.add('hidden'),1800);}
+}
+
+function loadData(){
+  // Load from localStorage first (instant)
+  try{data=JSON.parse(localStorage.getItem(LS))||{};}catch(e){data={};}
+}
+function saveD(){
+  // Save to localStorage (instant)
+  localStorage.setItem(LS,JSON.stringify(data));
+  // Push to Firebase
+  saveToFirebase();
+}
+function saveToFirebase(){
+  if(saving)return;saving=true;
+  showSync('syncing','⟳ Syncing...');
+  dbRef.set(data).then(()=>{
+    showSync('synced','✓ Synced');saving=false;
+  }).catch(e=>{
+    console.error('Firebase save error:',e);
+    showSync('offline','✕ Offline');saving=false;
+  });
+}
+
+// Listen for remote changes (other devices)
+function initFirebaseSync(){
+  dbRef.on('value',snap=>{
+    const remote=snap.val();
+    if(!remote)return;
+    // Only update if remote is different (avoid echo)
+    const localStr=JSON.stringify(data);
+    const remoteStr=JSON.stringify(remote);
+    if(localStr!==remoteStr){
+      data=remote;
+      localStorage.setItem(LS,JSON.stringify(data));
+      showSync('synced','✓ Updated');
+      // Re-render if app is visible
+      if(document.getElementById('app').style.display!=='none'){
+        render();
+      }
+    }
+    firebaseReady=true;
+  },err=>{
+    console.error('Firebase listen error:',err);
+    showSync('offline','✕ Offline');
+  });
+}
 function mkey(y,m){return y+'_'+String(m+1).padStart(2,'0');}
 function mk(){return mkey(cy,cm);}
 function ensure(k){if(!data.months)data.months={};if(!data.months[k])data.months[k]={categories:[],payReceived:false};}
@@ -541,7 +616,7 @@ function completeSetup(){
 
 // ── INIT ──
 function init(){
-  loadData();initParticles();buildIconGrid();buildColorGrid();buildBankGrid();
+  loadData();initFirebaseSync();initParticles();buildIconGrid();buildColorGrid();buildBankGrid();
   if(!data.income){document.getElementById('splash').style.display='';document.getElementById('app').style.display='none';}
   else{document.getElementById('splash').style.display='none';document.getElementById('app').style.display='';render();}
   document.querySelectorAll('.modal-overlay').forEach(el=>{el.addEventListener('click',e=>{if(e.target===el){el.classList.remove('show');editingCatId=null;}});});
@@ -625,7 +700,7 @@ function renderCategories(m){
         </div>
         <div class="cat-actions">
           <div class="cat-act-btn" onclick="event.stopPropagation();editCategory(${i})">✏️ Edit</div>
-          <div class="cat-act-btn del" onclick="event.stopPropagation();openConfirm('Delete ${c.name}?','All expenses in this category will be lost.',()=>deleteCategory(${i}))">🗑 Delete</div>
+          <div class="cat-act-btn del" onclick="event.stopPropagation();openConfirm('Delete ${c.name}?','All expenses in this category will be lost.',()=>deleteCategory(${i}))">?? Delete</div>
         </div>
         </div>
       </div>
@@ -848,7 +923,7 @@ function exportData(){
   const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='hermeen_budget_backup.json';a.click();toast('Data exported ∞');
 }
-function resetAll(){localStorage.removeItem(LS);location.reload();}
+function resetAll(){localStorage.removeItem(LS);dbRef.remove();location.reload();}
 
 // ── TOAST ──
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.className='toast show';clearTimeout(t._to);t._to=setTimeout(()=>t.classList.remove('show'),2300);}
